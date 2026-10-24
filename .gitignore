@@ -1,2 +1,13 @@
 .env
 *.env
+
+# arduino
+config.h
+
+# ML
+model
+
+# MainFeat
+__pycache__
+
+.vscode
