@@ -8,20 +8,13 @@ from dotenv import load_dotenv
 import os
 import pymongo
 
-load_dotenv()
+load_dotenv(override=True)
 uri = os.getenv('MONGO_URI')
 client = MongoClient(uri)
 db = client['ForgetMeNot_db']
 collection = db['sensor_data']
 
 app = Flask(__name__)
-
-# functions
-# def calculate_blood_glucose(spo2, hr) -> float:
-#     bs = 16714.61 + 0.47 * hr - 351.045 * spo2 + 1.85 * spo2**2
-#     # The metrics is still in mg/dL we need to convert it to mmol/L
-#     return bs / 18
-
 
 def get_data(pipeline: list[dict]) -> list[dict]:
     result = list(collection.aggregate(pipeline))
@@ -31,13 +24,14 @@ def get_avg_data()->dict:
     curr_time = datetime.datetime.now()
     five_minutes_ago = curr_time - datetime.timedelta(minutes=5)
     pipeline = [
-        {"$match": {"timestamp": {"$gte": five_minutes_ago, "$lt": curr_time}}},
-        {"$group": 
-            {
+        {"$sort": {"timestamp": -1}},
+        {"$limit": 5},
+        {
+            "$group": {
                 "_id": None,
-                "average_body_temp": {"$avg": "body_temp"},
-                "average_heart_rate": {"$avg": "heart_rate"},
-                "average_spo2": {"$avg": "spo2"}
+                "average_body_temp": {"$avg": "$body_temp"},
+                "average_heart_rate": {"$avg": "$heart_rate"},
+                "average_spo2": {"$avg": "$spo2"}
             }
         }
     ]
@@ -58,10 +52,12 @@ def upload():
     latest_data = request.get_json(force=True)
     data_to_send = {
         "timestamp": datetime.datetime.now(),
-        # "bs": calculate_blood_glucose(latest_data['spo2'], latest_data['heart_rate']),
         "body_temp": latest_data['body_temp'],
         "heart_rate": latest_data['heart_rate'],
-        "spo2": latest_data['spo2']
+        "spo2": latest_data['spo2'],
+        "latitude": latest_data['latitude'],
+        "longitude": latest_data['longitude'],
+        "speed": latest_data['speed']
     }
     collection.insert_one(data_to_send)
     return jsonify({"status": "Data received"}), 200
@@ -76,6 +72,13 @@ def get_latest_data():
     latest_data = get_data(pipeline)[0]
     latest_data.pop("_id")
     return jsonify(latest_data)
+
+@app.route('/get_all_data', methods=['GET'])
+def get_all_data():
+    data = list(collection.find())
+    for d in data:
+        d.pop("_id")
+    return jsonify(data)
 
 # automation
 @app.route('/predict', methods=['GET'])
