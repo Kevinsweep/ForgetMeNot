@@ -6,6 +6,7 @@
 #include <DallasTemperature.h>
 #include "spo2_algorithm.h"
 #include "config.h"
+#include <TinyGPS++.h>
 
 // constants
 const char* SSID = WIFI_SSID;
@@ -55,10 +56,25 @@ int adc_range = 4096;      // 2048, 4096, 8192, 16384
 OneWire oneWire(BODY_TEMP_PIN);
 DallasTemperature sensor_body_temp(&oneWire);
 
+// Neo6m settings
+#define RXD2 16
+#define TXD2 17
+
+#define GPS_BAUD 9600
+
+// The TinyGPS++ object
+TinyGPSPlus gps;
+
+// Create an instance of the HardwareSerial class for Serial 2
+HardwareSerial gpsSerial(2);
+
 // to send
 double body_temp_to_send = 0;
 int heart_rate_to_send = 0;
 double spo2_to_send = 0;
+double latitude;
+double longitude;
+double speed;
 
 
 const unsigned long API_interval = 10000;
@@ -89,6 +105,8 @@ void setup() {
   sensor_body_temp.begin();
   
   sensor_hr.setup(led_brightness, sample_average, led_mode, sample_rate, pulse_width, adc_range);
+
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
   // use core 0 for monitoring
   xTaskCreatePinnedToCore(
     monitor_sensors,       /* Task function. */
@@ -190,6 +208,17 @@ bool value_sanity_check(double temp, int rate, double spo2){
   return true;
 }
 
+void get_location_info(){
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
+  }
+  if (gps.location.isUpdated()) {
+    latitude = gps.location.lat();
+    longitude = gps.location.lng();
+    speed = gps.speed.kmph();
+  }
+}
+
 void rodok_API(){
   WiFiClient client;
   HTTPClient http;
@@ -198,7 +227,7 @@ void rodok_API(){
   http.begin(client, SERVER_NAME);
   http.addHeader("Content-Type", "application/json");
   char post_string[150];
-  sprintf(post_string, "{\"body_temp\":%.2lf, \"heart_rate\":%d, \"spo2\":%.2lf}",body_temp_to_send, heart_rate_to_send, spo2_to_send);
+  sprintf(post_string, "{\"body_temp\":%.2lf, \"heart_rate\":%d, \"spo2\":%.2lf, \"latitude\":%lf, \"longitude\":%lf, \"speed\":%.2lf}",body_temp_to_send, heart_rate_to_send, spo2_to_send, latitude, longitude, speed);
   http_response_code = http.POST(post_string);
   Serial.print("HTTP Response code: ");
   Serial.println(http_response_code);
@@ -208,6 +237,8 @@ void rodok_API(){
 void loop() {
   // put your main code here, to run repeatedly:
   unsigned long current_millis = millis(); 
+
+  get_location_info();
 
   // Print to serial monitor
   if (current_millis - previous_serial_millis >= serial_interval){
@@ -222,7 +253,6 @@ void loop() {
   if (current_millis - previous_API_millis >= API_interval && value_sanity_check(body_temp_to_send, heart_rate_to_send, spo2_to_send)) {
     // 5. Save the last time you ran the code block
     previous_API_millis = current_millis; 
-
     rodok_API();
   }
 }
